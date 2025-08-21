@@ -5,116 +5,85 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Obtener mi firma</title>
   <style>body{font-family:Segoe UI,system-ui,Arial;margin:24px}</style>
-
-  <!-- Cargador robusto de MSAL: Microsoft CDN + fallback a jsDelivr -->
-  <script>
-    (function loadMsal(cb){
-      const urls = [
-        "https://alcdn.msauth.net/browser/3.12.1/js/msal-browser.min.js",
-        "https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.12.1/dist/msal-browser.min.js"
-      ];
-      let i = 0;
-      function tryNext(){
-        if (i >= urls.length) return cb(new Error("No se pudo cargar MSAL"));
-        const s = document.createElement("script");
-        s.src = urls[i++];
-        s.async = true;
-        s.onload = () => cb();
-        s.onerror = tryNext;
-        document.head.appendChild(s);
-      }
-      tryNext();
-    })(function(err){
-      if (err) {
-        document.body.innerHTML = "<b>Error:</b> No se pudo cargar MSAL (posible bloqueo del CDN).";
-        window.__MSAL_LOAD_FAILED__ = true;
-      }
-    });
-  </script>
 </head>
 <body>Generando solicitud de firma…</body>
 <script>
 (async () => {
-  // Espera a que MSAL esté disponible
-  function waitForMsal() {
-    return new Promise((resolve, reject) => {
-      let t = 0;
-      (function check(){
-        if (window.__MSAL_LOAD_FAILED__) return reject(new Error("MSAL no cargó"));
-        if (typeof window.msal !== "undefined") return resolve();
-        if (t++ > 200) return reject(new Error("Timeout esperando MSAL"));
-        setTimeout(check, 25);
-      })();
-    });
-  }
-
-  await waitForMsal();
-
-  // ===== CONFIG (ya con tus datos) =====
-  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";  // App (client) ID
-  const TENANT    = "zienideascloud.onmicrosoft.com";         // Tenant
-  const REDIRECT  = location.href.split("#")[0].split("?")[0]; // esta misma URL
+  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";    // App (client) ID
+  const TENANT    = "zienideascloud.onmicrosoft.com";           // Tenant
+  const REDIRECT  = location.href.split("#")[0].split("?")[0];  // esta misma URL
   const DESTINO   = "https://script.google.com/macros/s/AKfycbzsxy2F6diunkeF8rem_yVUPxIikvpQcFzSH7EfiWtfotUjOlzLBmOst5zY05wrDPsB/exec";
-  // =====================================
+  const SCOPES    = "openid profile email User.Read";           // v2.0
 
-  const msalInstance = new msal.PublicClientApplication({
-    auth: {
-      clientId:  CLIENT_ID,
-      authority: `https://login.microsoftonline.com/${TENANT}`,
-      redirectUri: REDIRECT
-    },
-    cache: { cacheLocation: "sessionStorage" }
-  });
-  await msalInstance.initialize();
+  // --- utils ---
+  const b64url = s => btoa(String.fromCharCode(...s)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  function rnd(n=32){ const a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a); }
+  function parseHash(h){ const p=new URLSearchParams((h||"").replace(/^#/, "")); const o={}; for(const [k,v] of p) o[k]=v; return o; }
+  function clearHash(){ if(location.hash) history.replaceState(null,"",REDIRECT); }
+  function decodeJwt(jwt){ const pl=jwt.split(".")[1]; const s=atob(pl.replace(/-/g,"+").replace(/_/g,"/")); return JSON.parse(decodeURIComponent(escape(s))); }
 
-  const scope = { scopes: ["User.Read"] };
+  // ¿Venimos con tokens en el hash?
+  const hash = location.hash || "";
+  if (hash.includes("access_token=") || hash.includes("id_token=")) {
+    const params = parseHash(hash); clearHash();
+    const accessToken = params.access_token;
+    const idToken     = params.id_token;
 
-  // Login
-  let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
-  if (!account) {
-    const res = await msalInstance.loginPopup(scope);
-    msalInstance.setActiveAccount(res.account);
-    account = res.account;
+    // Perfil
+    let given="", surname="", email="", login="";
+    try {
+      const me = await fetch("https://graph.microsoft.com/v1.0/me", {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      }).then(r => r.json());
+      given   = (me.givenName || "").trim();
+      surname = (me.surname   || "").trim();
+      email   = (me.mail || me.userPrincipalName || "").trim();
+      login   = (me.userPrincipalName || "").trim();
+    } catch {
+      if (idToken) {
+        try {
+          const c = decodeJwt(idToken);
+          given   = (c.given_name || "").trim();
+          surname = (c.family_name || "").trim();
+          email   = (c.email || c.preferred_username || "").trim();
+          login   = (c.preferred_username || "").trim();
+        } catch {}
+      }
+    }
+
+    async function sha256(t){ const e=new TextEncoder().encode(t); const b=await crypto.subtle.digest("SHA-256",e); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+    const uid = await sha256((email || login).toLowerCase());
+
+    const url = new URL(DESTINO);
+    url.searchParams.set("given",   given);
+    url.searchParams.set("surname", surname);
+    url.searchParams.set("email",   email);
+    url.searchParams.set("login",   login);
+    url.searchParams.set("uid",     uid);
+    url.searchParams.set("page",    document.referrer || location.href);
+    location.replace(url.toString());
+    return;
   }
 
-  // Token
-  let token;
-  try {
-    token = (await msalInstance.acquireTokenSilent(scope)).accessToken;
-  } catch {
-    token = (await msalInstance.acquireTokenPopup(scope)).accessToken;
-  }
+  // Lanzar login (implicit grant) sin librerías
+  const state = rnd(), nonce = rnd();
+  sessionStorage.setItem("oauth_state", state);
+  sessionStorage.setItem("oauth_nonce", nonce);
 
-  // Perfil
-  const me = await fetch("https://graph.microsoft.com/v1.0/me", {
-    headers: { Authorization: `Bearer ${token}` }
-  }).then(r => r.json());
+  const auth = new URL(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`);
+  auth.searchParams.set("client_id",     CLIENT_ID);
+  auth.searchParams.set("response_type", "token id_token");  // access_token + id_token
+  auth.searchParams.set("redirect_uri",  REDIRECT);
+  auth.searchParams.set("scope",         SCOPES);
+  auth.searchParams.set("response_mode", "fragment");
+  auth.searchParams.set("state",         state);
+  auth.searchParams.set("nonce",         nonce);
+  auth.searchParams.set("prompt",        "select_account");  // opcional
 
-  const given   = (me.givenName || "").trim();
-  const surname = (me.surname   || "").trim();
-  const email   = (me.mail || me.userPrincipalName || "").trim();
-  const login   = (me.userPrincipalName || "").trim();
-
-  // UID determinista
-  async function sha256(t){
-    const e = new TextEncoder().encode(t);
-    const b = await crypto.subtle.digest("SHA-256", e);
-    return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2,"0")).join("");
-  }
-  const uid = await sha256((email || login).toLowerCase());
-
-  // Redirige a Apps Script
-  const url = new URL(DESTINO);
-  url.searchParams.set("given",   given);
-  url.searchParams.set("surname", surname);
-  url.searchParams.set("email",   email);
-  url.searchParams.set("login",   login);
-  url.searchParams.set("uid",     uid);
-  url.searchParams.set("page",    document.referrer || location.href);
-
-  location.replace(url.toString());
+  location.assign(auth.toString());
 })().catch(err => {
   document.body.innerHTML = "<b>Error:</b> " + (err?.message || String(err));
 });
 </script>
 </html>
+
