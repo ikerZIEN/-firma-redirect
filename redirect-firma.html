@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Obtener mi firma</title>
+  <style>
+    body{font-family:Segoe UI,system-ui,Arial;margin:24px}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.12.1/dist/msal-browser.min.js"></script>
+</head>
+<body>Generando solicitud de firma…</body>
+<script>
+(async () => {
+  // ===== CONFIGURACIÓN (ya con tus datos) =====
+  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";    // Id de aplicación (cliente)
+  const TENANT    = "zienideascloud.onmicrosoft.com";           // Tu tenant
+  // Calcula automáticamente la URL de esta misma página como redirectUri
+  const REDIRECT  = location.href.split("#")[0].split("?")[0];
+
+  // Tu Apps Script /exec (ya inserta en Google Sheets)
+  const DESTINO   = "https://script.google.com/macros/s/AKfycbzsxy2F6diunkeF8rem_yVUPxIikvpQcFzSH7EfiWtfotUjOlzLBmOst5zY05wrDPsB/exec";
+  // ============================================
+
+  // Inicializa MSAL
+  const msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId:  CLIENT_ID,
+      authority: `https://login.microsoftonline.com/${TENANT}`,
+      redirectUri: REDIRECT
+    },
+    cache: { cacheLocation: "sessionStorage" }
+  });
+  await msalInstance.initialize();
+
+  const scope = { scopes: ["User.Read"] };
+
+  // Asegura sesión
+  let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
+  if (!account) {
+    const res = await msalInstance.loginPopup(scope);
+    msalInstance.setActiveAccount(res.account);
+    account = res.account;
+  }
+
+  // Obtiene token para Graph
+  let token;
+  try {
+    token = (await msalInstance.acquireTokenSilent(scope)).accessToken;
+  } catch {
+    token = (await msalInstance.acquireTokenPopup(scope)).accessToken;
+  }
+
+  // Lee perfil del usuario
+  const me = await fetch("https://graph.microsoft.com/v1.0/me", {
+    headers: { Authorization: `Bearer ${token}` }
+  }).then(r => r.json());
+
+  const given   = (me.givenName || "").trim();
+  const surname = (me.surname   || "").trim();
+  const email   = (me.mail || me.userPrincipalName || "").trim();
+  const login   = (me.userPrincipalName || "").trim();
+
+  // UID estable (hash del email/login)
+  async function sha256(t){
+    const e = new TextEncoder().encode(t);
+    const b = await crypto.subtle.digest("SHA-256", e);
+    return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2,"0")).join("");
+  }
+  const uid = await sha256((email || login).toLowerCase());
+
+  // Redirige a Apps Script con parámetros → Google Sheets se rellena
+  const url = new URL(DESTINO);
+  url.searchParams.set("given",   given);
+  url.searchParams.set("surname", surname);
+  url.searchParams.set("email",   email);
+  url.searchParams.set("login",   login);
+  url.searchParams.set("uid",     uid);
+  url.searchParams.set("page",    document.referrer || location.href);
+
+  location.replace(url.toString());
+})().catch(err => {
+  document.body.innerHTML = "<b>Error:</b> " + (err?.message || String(err));
+});
+</script>
+</html>
+
