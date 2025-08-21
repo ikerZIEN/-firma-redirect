@@ -4,25 +4,59 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Obtener mi firma</title>
-  <style>
-    body{font-family:Segoe UI,system-ui,Arial;margin:24px}
-  </style>
-  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.12.1/dist/msal-browser.min.js"></script>
+  <style>body{font-family:Segoe UI,system-ui,Arial;margin:24px}</style>
+
+  <!-- Cargador robusto de MSAL: Microsoft CDN + fallback a jsDelivr -->
+  <script>
+    (function loadMsal(cb){
+      const urls = [
+        "https://alcdn.msauth.net/browser/3.12.1/js/msal-browser.min.js",
+        "https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.12.1/dist/msal-browser.min.js"
+      ];
+      let i = 0;
+      function tryNext(){
+        if (i >= urls.length) return cb(new Error("No se pudo cargar MSAL"));
+        const s = document.createElement("script");
+        s.src = urls[i++];
+        s.async = true;
+        s.onload = () => cb();
+        s.onerror = tryNext;
+        document.head.appendChild(s);
+      }
+      tryNext();
+    })(function(err){
+      if (err) {
+        document.body.innerHTML = "<b>Error:</b> No se pudo cargar MSAL (posible bloqueo del CDN).";
+        window.__MSAL_LOAD_FAILED__ = true;
+      }
+    });
+  </script>
 </head>
 <body>Generando solicitud de firma…</body>
 <script>
 (async () => {
-  // ===== CONFIGURACIÓN (ya con tus datos) =====
-  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";    // Id de aplicación (cliente)
-  const TENANT    = "zienideascloud.onmicrosoft.com";           // Tu tenant
-  // Calcula automáticamente la URL de esta misma página como redirectUri
-  const REDIRECT  = location.href.split("#")[0].split("?")[0];
+  // Espera a que MSAL esté disponible
+  function waitForMsal() {
+    return new Promise((resolve, reject) => {
+      let t = 0;
+      (function check(){
+        if (window.__MSAL_LOAD_FAILED__) return reject(new Error("MSAL no cargó"));
+        if (typeof window.msal !== "undefined") return resolve();
+        if (t++ > 200) return reject(new Error("Timeout esperando MSAL"));
+        setTimeout(check, 25);
+      })();
+    });
+  }
 
-  // Tu Apps Script /exec (ya inserta en Google Sheets)
+  await waitForMsal();
+
+  // ===== CONFIG (ya con tus datos) =====
+  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";  // App (client) ID
+  const TENANT    = "zienideascloud.onmicrosoft.com";         // Tenant
+  const REDIRECT  = location.href.split("#")[0].split("?")[0]; // esta misma URL
   const DESTINO   = "https://script.google.com/macros/s/AKfycbzsxy2F6diunkeF8rem_yVUPxIikvpQcFzSH7EfiWtfotUjOlzLBmOst5zY05wrDPsB/exec";
-  // ============================================
+  // =====================================
 
-  // Inicializa MSAL
   const msalInstance = new msal.PublicClientApplication({
     auth: {
       clientId:  CLIENT_ID,
@@ -35,7 +69,7 @@
 
   const scope = { scopes: ["User.Read"] };
 
-  // Asegura sesión
+  // Login
   let account = msalInstance.getActiveAccount() || msalInstance.getAllAccounts()[0];
   if (!account) {
     const res = await msalInstance.loginPopup(scope);
@@ -43,7 +77,7 @@
     account = res.account;
   }
 
-  // Obtiene token para Graph
+  // Token
   let token;
   try {
     token = (await msalInstance.acquireTokenSilent(scope)).accessToken;
@@ -51,7 +85,7 @@
     token = (await msalInstance.acquireTokenPopup(scope)).accessToken;
   }
 
-  // Lee perfil del usuario
+  // Perfil
   const me = await fetch("https://graph.microsoft.com/v1.0/me", {
     headers: { Authorization: `Bearer ${token}` }
   }).then(r => r.json());
@@ -61,7 +95,7 @@
   const email   = (me.mail || me.userPrincipalName || "").trim();
   const login   = (me.userPrincipalName || "").trim();
 
-  // UID estable (hash del email/login)
+  // UID determinista
   async function sha256(t){
     const e = new TextEncoder().encode(t);
     const b = await crypto.subtle.digest("SHA-256", e);
@@ -69,7 +103,7 @@
   }
   const uid = await sha256((email || login).toLowerCase());
 
-  // Redirige a Apps Script con parámetros → Google Sheets se rellena
+  // Redirige a Apps Script
   const url = new URL(DESTINO);
   url.searchParams.set("given",   given);
   url.searchParams.set("surname", surname);
@@ -84,4 +118,3 @@
 });
 </script>
 </html>
-
