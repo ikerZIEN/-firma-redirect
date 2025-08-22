@@ -1,158 +1,105 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Generando tu firma…</title>
-
-<!-- MSAL (versión estable que ya habías usado) -->
-<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.14.1/dist/msal-browser.min.js"></script>
-
-<style>
-  :root{ --azul:#005DA9; --bg:#0b1117; }
-
-  *{ box-sizing:border-box }
-  html,body{ height:100% }
-  body{
-    margin:0;
-    background:var(--bg);
-    color:#fff;
-    font-family:Segoe UI, Roboto, Arial, Helvetica, sans-serif;
-    display:flex; align-items:center; justify-content:center;
-    padding:24px;
-  }
-
-  /* Tarjeta principal SIN imagen de fondo */
-  .card{
-    width:min(980px, 96vw);
-    border-radius:18px;
-    overflow:hidden;
-    box-shadow:0 20px 46px rgba(0,0,0,.35);
-    background:var(--azul);
-    text-align:center;
-    padding:42px 24px 38px;
-  }
-
-  .icon{ font-size:44px; line-height:1; margin-bottom:10px }
-  .title{
-    margin:0 0 8px;
-    font-weight:800;
-    letter-spacing:.3px;
-    font-size:clamp(22px,4vw,34px);
-  }
-  .subtitle{
-    margin:0;
-    opacity:.92;
-    font-size:clamp(14px,2.4vw,18px);
-  }
-
-  .small{
-    margin-top:16px;
-    font-size:12px;
-    opacity:.8;
-  }
-
-  .error{
-    background:#2a0f12;
-    color:#ffd6d9;
-    margin-top:18px;
-    border-radius:10px;
-    padding:12px 14px;
-    font-size:13px;
-    display:none;
-  }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Obtener mi firma</title>
+  <style>
+    body{font-family:Segoe UI,system-ui,Arial;margin:24px;line-height:1.5}
+    .muted{color:#666}
+  </style>
 </head>
 <body>
-  <main class="card" role="main" aria-live="polite">
-    <div class="icon">⏳</div>
-    <h1 class="title">Generando tu solicitud de firma…</h1>
-    <p class="subtitle">¡Revisa tu correo electrónico para descargarla!</p>
-    <div id="err" class="error"></div>
-    <p class="small" id="footNote">Esto tarda solo unos segundos.</p>
-  </main>
-
+  <div id="log">Preparando autenticación…</div>
+  <div class="muted" id="sub"></div>
 <script>
-/* =======================
-   CONFIGURACIÓN
-======================= */
-const CLIENT_ID  = "PON_AQUI_TU_CLIENT_ID";              // <- cambia
-const TENANT     = "zienideascloud.onmicrosoft.com";     // <- cambia si procede
-const GAS_WEBAPP = "https://script.google.com/macros/s/XXXX/exec"; // <- cambia
+(async () => {
+  // ====== TU CONFIG ======
+  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";           // App (client) ID
+  const TENANT    = "zienideascloud.onmicrosoft.com";                  // Tenant
+  const REDIRECT  = location.href.split("#")[0].split("?")[0];         // esta misma URL
+  const DESTINO   = "https://script.google.com/macros/s/AKfycbzsxy2F6diunkeF8rem_yVUPxIikvpQcFzSH7EfiWtfotUjOlzLBmOst5zY05wrDPsB/exec";
+  const SCOPES    = "openid profile email User.Read";                  // v2.0
+  // ========================
 
-/* =======================
-   LÓGICA
-======================= */
-const msalConfig = {
-  auth: {
-    clientId: CLIENT_ID,
-    authority: `https://login.microsoftonline.com/${TENANT}`,
-    redirectUri: window.location.origin + window.location.pathname
-  },
-  cache: { cacheLocation: "sessionStorage" }
-};
-const SCOPES = ["User.Read"]; // solo para login; no llamamos Graph
+  const log = (t,s="") => { document.getElementById("log").textContent = t; document.getElementById("sub").textContent = s; };
 
-const app = new msal.PublicClientApplication(msalConfig);
-const $err = document.getElementById("err");
-const $foot = document.getElementById("footNote");
+  // utilidades
+  const b64url = s => btoa(String.fromCharCode(...s)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  function rnd(n=32){ const a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a); }
+  function parseHash(h){ const p=new URLSearchParams((h||"").replace(/^#/, "")); const o={}; for(const [k,v] of p) o[k]=v; return o; }
+  function clearHash(){ if(location.hash) history.replaceState(null,"",REDIRECT); }
+  function decodeJwt(jwt){ const pl=jwt.split(".")[1]; const s=atob(pl.replace(/-/g,"+").replace(/_/g,"/")); return JSON.parse(decodeURIComponent(escape(s))); }
 
-function showError(msg){
-  $err.style.display = "block";
-  $err.textContent = msg;
-}
+  // ¿venimos con tokens?
+  if (location.hash.includes("access_token=") || location.hash.includes("id_token=")) {
+    log("Autenticando…","Leyendo perfil");
+    const params = parseHash(location.hash); clearHash();
 
-function buildParamsFromClaims(claims){
-  const email = claims.email || claims.preferred_username || "";
-  const payload = {
-    t:   new Date().toISOString(),
-    given:   claims.given_name   || "",
-    surname: claims.family_name  || "",
-    email:   email,
-    login:   claims.preferred_username || email || "",
-    uid:     claims.oid || claims.sub || "",
-    page:    location.href.split("#")[0].split("?")[0]
-  };
-  return payload;
-}
+    const accessToken = params.access_token || "";
+    const idToken     = params.id_token     || "";
 
-async function sendToGas(payload){
-  const url = new URL(GAS_WEBAPP);
-  Object.entries(payload).forEach(([k,v]) => url.searchParams.set(k, v));
-  // GET simple; Apps Script responde JSON (no requiere CORS preflight)
-  const res = await fetch(url.toString(), { method: "GET" });
-  // Si tu WebApp devuelve JSON, podemos registrarlo (opcional):
-  try { const j = await res.json(); console.log("GAS:", j); } catch(e){}
-}
-
-async function run(){
-  try{
-    await app.initialize();
-    let account = app.getAllAccounts()[0];
-
-    if(!account){
-      await app.loginPopup({ scopes: SCOPES, prompt: "select_account" });
-      account = app.getAllAccounts()[0];
+    let given="", surname="", email="", login="";
+    try {
+      // Perfil por Graph
+      const me = await fetch("https://graph.microsoft.com/v1.0/me", {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      }).then(r => r.ok ? r.json() : r.text().then(t=>{throw new Error(t)}));
+      given   = (me.givenName || "").trim();
+      surname = (me.surname   || "").trim();
+      email   = (me.mail || me.userPrincipalName || "").trim();
+      login   = (me.userPrincipalName || "").trim();
+    } catch(e) {
+      // fallback: claims del id_token
+      if (idToken) {
+        try {
+          const c = decodeJwt(idToken);
+          given   = (c.given_name || "").trim();
+          surname = (c.family_name || "").trim();
+          email   = (c.email || c.preferred_username || "").trim();
+          login   = (c.preferred_username || "").trim();
+        } catch(_) {}
+      }
     }
 
-    // Tomamos los datos del ID token (sin llamar a Graph)
-    const claims = (account && account.idTokenClaims) ? account.idTokenClaims : {};
-    const payload = buildParamsFromClaims(claims);
-    console.log("Payload:", payload);
+    // uid estable
+    async function sha256(t){ const e=new TextEncoder().encode(t); const b=await crypto.subtle.digest("SHA-256",e); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
+    const uid = await sha256((email || login).toLowerCase());
 
-    // Enviar a tu Apps Script (appendRow)
-    await sendToGas(payload);
-
-    // Mensaje final (opcional)
-    $foot.textContent = "Si no ves el correo en unos instantes, revisa Spam o ‘No deseado’.";
-  }catch(err){
-    console.error(err);
-    showError("No pudimos completar la solicitud. Vuelve a intentarlo o contacta con soporte.");
-    $foot.textContent = "Error al procesar la solicitud.";
+    // registrar en Apps Script
+    log("Registrando la solicitud de firma…");
+    const url = new URL(DESTINO);
+    url.searchParams.set("given",   given);
+    url.searchParams.set("surname", surname);
+    url.searchParams.set("email",   email);
+    url.searchParams.set("login",   login);
+    url.searchParams.set("uid",     uid);
+    url.searchParams.set("page",    document.referrer || location.href);
+    location.replace(url.toString());
+    return;
   }
-}
 
-run();
+  // Lanzar login (implicit grant)
+  log("Redirigiendo a Microsoft…","Si no ocurre nada, revisa que los 'implicit grants' estén activos en Azure.");
+  const state = rnd(), nonce = rnd();
+  sessionStorage.setItem("oauth_state", state);
+  sessionStorage.setItem("oauth_nonce", nonce);
+
+  const auth = new URL(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`);
+  auth.searchParams.set("client_id",     CLIENT_ID);
+  auth.searchParams.set("response_type", "token id_token");   // access_token + id_token
+  auth.searchParams.set("redirect_uri",  REDIRECT);
+  auth.searchParams.set("scope",         SCOPES);
+  auth.searchParams.set("response_mode", "fragment");
+  auth.searchParams.set("state",         state);
+  auth.searchParams.set("nonce",         nonce);
+  auth.searchParams.set("prompt",        "select_account");   // opcional
+
+  location.assign(auth.toString());
+})().catch(err => {
+  document.getElementById("log").innerHTML = "<b>Error:</b> " + (err?.message || String(err));
+});
 </script>
 </body>
 </html>
+
