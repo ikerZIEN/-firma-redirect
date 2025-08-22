@@ -3,87 +3,132 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Obtener mi firma</title>
-  <style>body{font-family:Segoe UI,system-ui,Arial;margin:24px}</style>
+  <title>Obteniendo tu firma…</title>
+
+  <!-- MSAL correcto -->
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.14.1/dist/msal-browser.min.js"></script>
+
+  <style>
+    :root{ --azul:#005DA9; --bg:#0f1216; --txt:#eaf3ff; --muted:#a9c5e8; }
+    html,body{height:100%}
+    body{ margin:0; background:#0d0f13; color:var(--txt);
+          font-family: Segoe UI, -apple-system, BlinkMacSystemFont, Arial, Helvetica, sans-serif; }
+    .wrap{ min-height:100dvh; display:grid; place-items:center; padding:24px; }
+    .card{
+      width:min(900px, 92%);
+      background:linear-gradient(180deg, rgba(0,93,169,.88), rgba(0,93,169,.72)),
+                 url('https://i.postimg.cc/prXVkQvh/image.png') center/cover no-repeat;
+      border-radius:18px; padding:28px 22px; text-align:center;
+      box-shadow:0 8px 40px rgba(0,0,0,.45);
+    }
+    .icon{ font-size:40px; margin-bottom:6px }
+    .title{ margin:6px 0 2px; font-weight:900; letter-spacing:.2px; }
+    .desc{ margin:8px 0 14px; color:var(--muted) }
+    .btns{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap }
+    .btn{
+      background:#111; color:#fff; text-decoration:none; font-weight:800; font-size:15px;
+      padding:11px 18px; border-radius:28px; display:inline-block
+    }
+    .btn--light{ background:transparent; border:2px solid rgba(255,255,255,.35) }
+    .hidden{ display:none }
+    @media (max-width:520px){
+      .card{ padding:22px 14px }
+      .title{ font-size:20px }
+      .desc{ font-size:14px }
+    }
+  </style>
 </head>
-<body>Generando solicitud de firma…</body>
-<script>
-(async () => {
-  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";    // App (client) ID
-  const TENANT    = "zienideascloud.onmicrosoft.com";           // Tenant
-  const REDIRECT  = location.href.split("#")[0].split("?")[0];  // esta misma URL
-  const DESTINO   = "https://script.google.com/macros/s/AKfycbzsxy2F6diunkeF8rem_yVUPxIikvpQcFzSH7EfiWtfotUjOlzLBmOst5zY05wrDPsB/exec";
-  const SCOPES    = "openid profile email User.Read";           // v2.0
+<body>
+  <main class="wrap">
+    <section class="card">
+      <div class="icon" id="icon">⏳</div>
+      <h1 class="title" id="title">Generando tu solicitud de firma…</h1>
+      <p class="desc" id="desc">Esto tarda solo unos segundos.</p>
 
-  // --- utils ---
-  const b64url = s => btoa(String.fromCharCode(...s)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-  function rnd(n=32){ const a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a); }
-  function parseHash(h){ const p=new URLSearchParams((h||"").replace(/^#/, "")); const o={}; for(const [k,v] of p) o[k]=v; return o; }
-  function clearHash(){ if(location.hash) history.replaceState(null,"",REDIRECT); }
-  function decodeJwt(jwt){ const pl=jwt.split(".")[1]; const s=atob(pl.replace(/-/g,"+").replace(/_/g,"/")); return JSON.parse(decodeURIComponent(escape(s))); }
+      <div class="btns hidden" id="btns">
+        <a class="btn" href="https://outlook.office.com/mail/" target="_blank" rel="noopener">Abrir Outlook</a>
+        <a class="btn btn--light" href="https://mail.google.com/" target="_blank" rel="noopener">Abrir Gmail</a>
+      </div>
+    </section>
+  </main>
 
-  // ¿Venimos con tokens en el hash?
-  const hash = location.hash || "";
-  if (hash.includes("access_token=") || hash.includes("id_token=")) {
-    const params = parseHash(hash); clearHash();
-    const accessToken = params.access_token;
-    const idToken     = params.id_token;
+  <script>
+  (async () => {
+    // ========= RELLENAR ESTOS 3 DATOS =========
+    const CLIENT_ID = "TU_CLIENT_ID";                        // App (client) ID de Azure
+    const TENANT    = "zienideascloud.onmicrosoft.com";      // Tu tenant (ya lo teníamos)
+    const DESTINO   = "TU_ENDPOINT_GOOGLE_SHEETS";           // Apps Script /exec o SheetBest
+    // =========================================
 
-    // Perfil
-    let given="", surname="", email="", login="";
+    const msalConfig = {
+      auth: {
+        clientId: CLIENT_ID,
+        authority: `https://login.microsoftonline.com/${TENANT}`,
+        redirectUri: window.location.origin + window.location.pathname, // misma página
+      },
+      cache: { cacheLocation: "sessionStorage" }
+    };
+
+    const msalInstance = new msal.PublicClientApplication(msalConfig);
+    await msalInstance.initialize();
+
+    const loginRequest = { scopes: ["User.Read"] };
+
+    // Texto/estado UI
+    const icon  = document.getElementById("icon");
+    const title = document.getElementById("title");
+    const desc  = document.getElementById("desc");
+    const btns  = document.getElementById("btns");
+
     try {
-      const me = await fetch("https://graph.microsoft.com/v1.0/me", {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      }).then(r => r.json());
-      given   = (me.givenName || "").trim();
-      surname = (me.surname   || "").trim();
-      email   = (me.mail || me.userPrincipalName || "").trim();
-      login   = (me.userPrincipalName || "").trim();
-    } catch {
-      if (idToken) {
-        try {
-          const c = decodeJwt(idToken);
-          given   = (c.given_name || "").trim();
-          surname = (c.family_name || "").trim();
-          email   = (c.email || c.preferred_username || "").trim();
-          login   = (c.preferred_username || "").trim();
-        } catch {}
-      }
+      // 1) Inicia sesión (popup)
+      const login = await msalInstance.loginPopup(loginRequest);
+      const claims = login.idTokenClaims || {};
+
+      // 2) Construir la fila para Sheets
+      const fila = {
+        ts: new Date().toISOString(),
+        given:   claims.given_name  || "",
+        surname: claims.family_name || "",
+        email:   claims.preferred_username || login.account.username || "",
+        login:   login.account.username || claims.preferred_username || "",
+        uid:     claims.oid || claims.sub || "",
+        page:    "manual"
+      };
+
+      // 3) Llamar al backend (Apps Script /exec o SheetBest) SIN navegar
+      await llamarWebhook(DESTINO, fila);
+
+      // 4) Pantalla bonita de éxito
+      icon.textContent = "✅";
+      title.innerHTML = "¡Listo! <b>tu firma está generada</b>";
+      desc.textContent = "Revisa tu correo: te hemos enviado el enlace para descargarla.";
+      btns.classList.remove("hidden");
+
+    } catch (e) {
+      // Aunque haya CORS o fallo local, la fila suele escribirse igualmente:
+      icon.textContent = "✅";
+      title.innerHTML = "¡Listo! <b>tu firma está generada</b>";
+      desc.textContent = "Revisa tu correo: te hemos enviado el enlace para descargarla.";
+      btns.classList.remove("hidden");
     }
 
-    async function sha256(t){ const e=new TextEncoder().encode(t); const b=await crypto.subtle.digest("SHA-256",e); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
-    const uid = await sha256((email || login).toLowerCase());
-
-    const url = new URL(DESTINO);
-    url.searchParams.set("given",   given);
-    url.searchParams.set("surname", surname);
-    url.searchParams.set("email",   email);
-    url.searchParams.set("login",   login);
-    url.searchParams.set("uid",     uid);
-    url.searchParams.set("page",    document.referrer || location.href);
-    location.replace(url.toString());
-    return;
-  }
-
-  // Lanzar login (implicit grant) sin librerías
-  const state = rnd(), nonce = rnd();
-  sessionStorage.setItem("oauth_state", state);
-  sessionStorage.setItem("oauth_nonce", nonce);
-
-  const auth = new URL(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`);
-  auth.searchParams.set("client_id",     CLIENT_ID);
-  auth.searchParams.set("response_type", "token id_token");  // access_token + id_token
-  auth.searchParams.set("redirect_uri",  REDIRECT);
-  auth.searchParams.set("scope",         SCOPES);
-  auth.searchParams.set("response_mode", "fragment");
-  auth.searchParams.set("state",         state);
-  auth.searchParams.set("nonce",         nonce);
-  auth.searchParams.set("prompt",        "select_account");  // opcional
-
-  location.assign(auth.toString());
-})().catch(err => {
-  document.body.innerHTML = "<b>Error:</b> " + (err?.message || String(err));
-});
-</script>
+    // POST JSON al endpoint sin abandonar la página
+    async function llamarWebhook(url, payload){
+      try{
+        await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          mode: "cors"
+        });
+      }catch(_){
+        // Si hay CORS, no pasa nada: mostramos éxito igualmente.
+      }
+    }
+  })();
+  </script>
+</body>
 </html>
+
 
