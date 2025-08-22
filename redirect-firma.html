@@ -1,134 +1,74 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Obteniendo tu firma…</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Obteniendo tu firma</title>
 
-  <!-- MSAL correcto -->
-  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.14.1/dist/msal-browser.min.js"></script>
+<style>
+  :root{ --azul:#005DA9; --bg:#0a0f14; }
 
-  <style>
-    :root{ --azul:#005DA9; --bg:#0f1216; --txt:#eaf3ff; --muted:#a9c5e8; }
-    html,body{height:100%}
-    body{ margin:0; background:#0d0f13; color:var(--txt);
-          font-family: Segoe UI, -apple-system, BlinkMacSystemFont, Arial, Helvetica, sans-serif; }
-    .wrap{ min-height:100dvh; display:grid; place-items:center; padding:24px; }
-    .card{
-      width:min(900px, 92%);
-      background:linear-gradient(180deg, rgba(0,93,169,.88), rgba(0,93,169,.72)),
-                 url('https://i.postimg.cc/prXVkQvh/image.png') center/cover no-repeat;
-      border-radius:18px; padding:28px 22px; text-align:center;
-      box-shadow:0 8px 40px rgba(0,0,0,.45);
-    }
-    .icon{ font-size:40px; margin-bottom:6px }
-    .title{ margin:6px 0 2px; font-weight:900; letter-spacing:.2px; }
-    .desc{ margin:8px 0 14px; color:var(--muted) }
-    .btns{ display:flex; gap:10px; justify-content:center; flex-wrap:wrap }
-    .btn{
-      background:#111; color:#fff; text-decoration:none; font-weight:800; font-size:15px;
-      padding:11px 18px; border-radius:28px; display:inline-block
-    }
-    .btn--light{ background:transparent; border:2px solid rgba(255,255,255,.35) }
-    .hidden{ display:none }
-    @media (max-width:520px){
-      .card{ padding:22px 14px }
-      .title{ font-size:20px }
-      .desc{ font-size:14px }
-    }
-  </style>
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:var(--bg);
+    color:#fff;
+    font-family:Segoe UI, Roboto, Arial, Helvetica, sans-serif;
+    display:flex; align-items:center; justify-content:center;
+    padding:22px;
+  }
+
+  .card{
+    width:min(980px, 96vw);
+    border-radius:18px;
+    overflow:hidden;
+    box-shadow:0 18px 44px rgba(0,0,0,.35);
+  }
+
+  /* === Bloque principal SOLO AZUL (sin imagen de fondo) === */
+  .hero{
+    background:var(--azul);
+    padding:42px 24px 46px;
+    text-align:center;
+  }
+
+  .icon{ font-size:44px; line-height:1; margin-bottom:10px; }
+  .title{
+    margin:0 0 10px;
+    font-weight:800;
+    letter-spacing:.3px;
+    font-size:clamp(22px,4vw,34px);
+  }
+  .subtitle{
+    margin:0;
+    opacity:.9;
+    font-size:clamp(14px,2.4vw,18px);
+  }
+
+  /* Nota opcional al pie */
+  .note{
+    background:#141a21;
+    color:#cfd8e3;
+    opacity:.9;
+    padding:16px 18px;
+    font-size:13px;
+    line-height:1.35;
+  }
+</style>
 </head>
 <body>
-  <main class="wrap">
-    <section class="card">
-      <div class="icon" id="icon">⏳</div>
-      <h1 class="title" id="title">Generando tu solicitud de firma…</h1>
-      <p class="desc" id="desc">Esto tarda solo unos segundos.</p>
+  <main class="card" role="main" aria-label="Generando firma">
+    <section class="hero" aria-label="Estado">
+      <div class="icon">⏳</div>
+      <h1 class="title">Generando tu solicitud de firma…</h1>
+      <p class="subtitle">¡Revisa tu correo electrónico para descargarla!</p>
+    </section>
 
-      <div class="btns hidden" id="btns">
-        <a class="btn" href="https://outlook.office.com/mail/" target="_blank" rel="noopener">Abrir Outlook</a>
-        <a class="btn btn--light" href="https://mail.google.com/" target="_blank" rel="noopener">Abrir Gmail</a>
-      </div>
+    <!-- Pie opcional (puedes quitarlo si no lo necesitas) -->
+    <section class="note">
+      Puedes cerrar esta pestaña en cuanto recibas el correo. Si no lo ves, revisa “Spam/No deseado”.
     </section>
   </main>
-
-  <script>
-  (async () => {
-    // ========= RELLENAR ESTOS 3 DATOS =========
-    const CLIENT_ID = "TU_CLIENT_ID";                        // App (client) ID de Azure
-    const TENANT    = "zienideascloud.onmicrosoft.com";      // Tu tenant (ya lo teníamos)
-    const DESTINO   = "TU_ENDPOINT_GOOGLE_SHEETS";           // Apps Script /exec o SheetBest
-    // =========================================
-
-    const msalConfig = {
-      auth: {
-        clientId: CLIENT_ID,
-        authority: `https://login.microsoftonline.com/${TENANT}`,
-        redirectUri: window.location.origin + window.location.pathname, // misma página
-      },
-      cache: { cacheLocation: "sessionStorage" }
-    };
-
-    const msalInstance = new msal.PublicClientApplication(msalConfig);
-    await msalInstance.initialize();
-
-    const loginRequest = { scopes: ["User.Read"] };
-
-    // Texto/estado UI
-    const icon  = document.getElementById("icon");
-    const title = document.getElementById("title");
-    const desc  = document.getElementById("desc");
-    const btns  = document.getElementById("btns");
-
-    try {
-      // 1) Inicia sesión (popup)
-      const login = await msalInstance.loginPopup(loginRequest);
-      const claims = login.idTokenClaims || {};
-
-      // 2) Construir la fila para Sheets
-      const fila = {
-        ts: new Date().toISOString(),
-        given:   claims.given_name  || "",
-        surname: claims.family_name || "",
-        email:   claims.preferred_username || login.account.username || "",
-        login:   login.account.username || claims.preferred_username || "",
-        uid:     claims.oid || claims.sub || "",
-        page:    "manual"
-      };
-
-      // 3) Llamar al backend (Apps Script /exec o SheetBest) SIN navegar
-      await llamarWebhook(DESTINO, fila);
-
-      // 4) Pantalla bonita de éxito
-      icon.textContent = "✅";
-      title.innerHTML = "¡Listo! <b>tu firma está generada</b>";
-      desc.textContent = "Revisa tu correo: te hemos enviado el enlace para descargarla.";
-      btns.classList.remove("hidden");
-
-    } catch (e) {
-      // Aunque haya CORS o fallo local, la fila suele escribirse igualmente:
-      icon.textContent = "✅";
-      title.innerHTML = "¡Listo! <b>tu firma está generada</b>";
-      desc.textContent = "Revisa tu correo: te hemos enviado el enlace para descargarla.";
-      btns.classList.remove("hidden");
-    }
-
-    // POST JSON al endpoint sin abandonar la página
-    async function llamarWebhook(url, payload){
-      try{
-        await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          mode: "cors"
-        });
-      }catch(_){
-        // Si hay CORS, no pasa nada: mostramos éxito igualmente.
-      }
-    }
-  })();
-  </script>
 </body>
 </html>
-
-
