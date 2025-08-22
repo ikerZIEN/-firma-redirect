@@ -3,72 +3,156 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Obteniendo tu firma</title>
+<title>Generando tu firma…</title>
+
+<!-- MSAL (versión estable que ya habías usado) -->
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.14.1/dist/msal-browser.min.js"></script>
 
 <style>
-  :root{ --azul:#005DA9; --bg:#0a0f14; }
+  :root{ --azul:#005DA9; --bg:#0b1117; }
 
-  *{ box-sizing:border-box; }
-  html,body{ height:100%; }
+  *{ box-sizing:border-box }
+  html,body{ height:100% }
   body{
     margin:0;
     background:var(--bg);
     color:#fff;
     font-family:Segoe UI, Roboto, Arial, Helvetica, sans-serif;
     display:flex; align-items:center; justify-content:center;
-    padding:22px;
+    padding:24px;
   }
 
+  /* Tarjeta principal SIN imagen de fondo */
   .card{
     width:min(980px, 96vw);
     border-radius:18px;
     overflow:hidden;
-    box-shadow:0 18px 44px rgba(0,0,0,.35);
-  }
-
-  /* === Bloque principal SOLO AZUL (sin imagen de fondo) === */
-  .hero{
+    box-shadow:0 20px 46px rgba(0,0,0,.35);
     background:var(--azul);
-    padding:42px 24px 46px;
     text-align:center;
+    padding:42px 24px 38px;
   }
 
-  .icon{ font-size:44px; line-height:1; margin-bottom:10px; }
+  .icon{ font-size:44px; line-height:1; margin-bottom:10px }
   .title{
-    margin:0 0 10px;
+    margin:0 0 8px;
     font-weight:800;
     letter-spacing:.3px;
     font-size:clamp(22px,4vw,34px);
   }
   .subtitle{
     margin:0;
-    opacity:.9;
+    opacity:.92;
     font-size:clamp(14px,2.4vw,18px);
   }
 
-  /* Nota opcional al pie */
-  .note{
-    background:#141a21;
-    color:#cfd8e3;
-    opacity:.9;
-    padding:16px 18px;
+  .small{
+    margin-top:16px;
+    font-size:12px;
+    opacity:.8;
+  }
+
+  .error{
+    background:#2a0f12;
+    color:#ffd6d9;
+    margin-top:18px;
+    border-radius:10px;
+    padding:12px 14px;
     font-size:13px;
-    line-height:1.35;
+    display:none;
   }
 </style>
 </head>
 <body>
-  <main class="card" role="main" aria-label="Generando firma">
-    <section class="hero" aria-label="Estado">
-      <div class="icon">⏳</div>
-      <h1 class="title">Generando tu solicitud de firma…</h1>
-      <p class="subtitle">¡Revisa tu correo electrónico para descargarla!</p>
-    </section>
-
-    <!-- Pie opcional (puedes quitarlo si no lo necesitas) -->
-    <section class="note">
-      Puedes cerrar esta pestaña en cuanto recibas el correo. Si no lo ves, revisa “Spam/No deseado”.
-    </section>
+  <main class="card" role="main" aria-live="polite">
+    <div class="icon">⏳</div>
+    <h1 class="title">Generando tu solicitud de firma…</h1>
+    <p class="subtitle">¡Revisa tu correo electrónico para descargarla!</p>
+    <div id="err" class="error"></div>
+    <p class="small" id="footNote">Esto tarda solo unos segundos.</p>
   </main>
+
+<script>
+/* =======================
+   CONFIGURACIÓN
+======================= */
+const CLIENT_ID  = "PON_AQUI_TU_CLIENT_ID";              // <- cambia
+const TENANT     = "zienideascloud.onmicrosoft.com";     // <- cambia si procede
+const GAS_WEBAPP = "https://script.google.com/macros/s/XXXX/exec"; // <- cambia
+
+/* =======================
+   LÓGICA
+======================= */
+const msalConfig = {
+  auth: {
+    clientId: CLIENT_ID,
+    authority: `https://login.microsoftonline.com/${TENANT}`,
+    redirectUri: window.location.origin + window.location.pathname
+  },
+  cache: { cacheLocation: "sessionStorage" }
+};
+const SCOPES = ["User.Read"]; // solo para login; no llamamos Graph
+
+const app = new msal.PublicClientApplication(msalConfig);
+const $err = document.getElementById("err");
+const $foot = document.getElementById("footNote");
+
+function showError(msg){
+  $err.style.display = "block";
+  $err.textContent = msg;
+}
+
+function buildParamsFromClaims(claims){
+  const email = claims.email || claims.preferred_username || "";
+  const payload = {
+    t:   new Date().toISOString(),
+    given:   claims.given_name   || "",
+    surname: claims.family_name  || "",
+    email:   email,
+    login:   claims.preferred_username || email || "",
+    uid:     claims.oid || claims.sub || "",
+    page:    location.href.split("#")[0].split("?")[0]
+  };
+  return payload;
+}
+
+async function sendToGas(payload){
+  const url = new URL(GAS_WEBAPP);
+  Object.entries(payload).forEach(([k,v]) => url.searchParams.set(k, v));
+  // GET simple; Apps Script responde JSON (no requiere CORS preflight)
+  const res = await fetch(url.toString(), { method: "GET" });
+  // Si tu WebApp devuelve JSON, podemos registrarlo (opcional):
+  try { const j = await res.json(); console.log("GAS:", j); } catch(e){}
+}
+
+async function run(){
+  try{
+    await app.initialize();
+    let account = app.getAllAccounts()[0];
+
+    if(!account){
+      await app.loginPopup({ scopes: SCOPES, prompt: "select_account" });
+      account = app.getAllAccounts()[0];
+    }
+
+    // Tomamos los datos del ID token (sin llamar a Graph)
+    const claims = (account && account.idTokenClaims) ? account.idTokenClaims : {};
+    const payload = buildParamsFromClaims(claims);
+    console.log("Payload:", payload);
+
+    // Enviar a tu Apps Script (appendRow)
+    await sendToGas(payload);
+
+    // Mensaje final (opcional)
+    $foot.textContent = "Si no ves el correo en unos instantes, revisa Spam o ‘No deseado’.";
+  }catch(err){
+    console.error(err);
+    showError("No pudimos completar la solicitud. Vuelve a intentarlo o contacta con soporte.");
+    $foot.textContent = "Error al procesar la solicitud.";
+  }
+}
+
+run();
+</script>
 </body>
 </html>
