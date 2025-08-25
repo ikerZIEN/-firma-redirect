@@ -1,105 +1,45 @@
-<!doctype html>
+// --- Respuesta HTML (hero con imagen de edificio) ---
+const html = `<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Obtener mi firma</title>
-  <style>
-    body{font-family:Segoe UI,system-ui,Arial;margin:24px;line-height:1.5}
-    .muted{color:#666}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solicitud enviada</title>
+<style>
+  :root{ --brand:#005DA9; }
+  *{ box-sizing:border-box }
+  html,body{ height:100% }
+  body{ margin:0; background:var(--brand); color:#fff; font-family:Segoe UI,system-ui,Arial,sans-serif }
+
+  .hero{
+    position:relative;
+    min-height:100vh;
+    display:grid;
+    place-items:center;
+    background: var(--brand) url('https://i.imgur.com/zfXaIuE.png') center center / cover no-repeat;
+  }
+  /* capa para mejorar contraste del texto */
+  .overlay{ position:absolute; inset:0; background:rgba(0,93,169,.78); }
+
+  .inner{ position:relative; padding:24px; text-align:center; width:min(960px,94%); }
+  h1{ margin:0 0 10px; font-weight:800; font-size:clamp(22px,2.8vw,34px); letter-spacing:.2px; text-shadow:0 1px 0 rgba(0,0,0,.25) }
+  p{ margin:8px 0 0; font-size:clamp(14px,1.6vw,16px); opacity:.95 }
+  .btns{ margin-top:16px; display:flex; justify-content:center; flex-wrap:wrap; gap:10px }
+  .btn{ display:inline-block; background:#0f1217; color:#fff; text-decoration:none; border-radius:999px;
+        padding:12px 18px; font-size:15px; font-weight:700 }
+</style>
 </head>
 <body>
-  <div id="log">Preparando autenticación…</div>
-  <div class="muted" id="sub"></div>
-<script>
-(async () => {
-  // ====== TU CONFIG ======
-  const CLIENT_ID = "386713b8-48b5-43e4-a578-bcf339993dde";           // App (client) ID
-  const TENANT    = "zienideascloud.onmicrosoft.com";                  // Tenant
-  const REDIRECT  = location.href.split("#")[0].split("?")[0];         // esta misma URL
-  const DESTINO   = "https://script.google.com/macros/s/AKfycbzsxy2F6diunkeF8rem_yVUPxIikvpQcFzSH7EfiWtfotUjOlzLBmOst5zY05wrDPsB/exec";
-  const SCOPES    = "openid profile email User.Read";                  // v2.0
-  // ========================
-
-  const log = (t,s="") => { document.getElementById("log").textContent = t; document.getElementById("sub").textContent = s; };
-
-  // utilidades
-  const b64url = s => btoa(String.fromCharCode(...s)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-  function rnd(n=32){ const a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a); }
-  function parseHash(h){ const p=new URLSearchParams((h||"").replace(/^#/, "")); const o={}; for(const [k,v] of p) o[k]=v; return o; }
-  function clearHash(){ if(location.hash) history.replaceState(null,"",REDIRECT); }
-  function decodeJwt(jwt){ const pl=jwt.split(".")[1]; const s=atob(pl.replace(/-/g,"+").replace(/_/g,"/")); return JSON.parse(decodeURIComponent(escape(s))); }
-
-  // ¿venimos con tokens?
-  if (location.hash.includes("access_token=") || location.hash.includes("id_token=")) {
-    log("Autenticando…","Leyendo perfil");
-    const params = parseHash(location.hash); clearHash();
-
-    const accessToken = params.access_token || "";
-    const idToken     = params.id_token     || "";
-
-    let given="", surname="", email="", login="";
-    try {
-      // Perfil por Graph
-      const me = await fetch("https://graph.microsoft.com/v1.0/me", {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      }).then(r => r.ok ? r.json() : r.text().then(t=>{throw new Error(t)}));
-      given   = (me.givenName || "").trim();
-      surname = (me.surname   || "").trim();
-      email   = (me.mail || me.userPrincipalName || "").trim();
-      login   = (me.userPrincipalName || "").trim();
-    } catch(e) {
-      // fallback: claims del id_token
-      if (idToken) {
-        try {
-          const c = decodeJwt(idToken);
-          given   = (c.given_name || "").trim();
-          surname = (c.family_name || "").trim();
-          email   = (c.email || c.preferred_username || "").trim();
-          login   = (c.preferred_username || "").trim();
-        } catch(_) {}
-      }
-    }
-
-    // uid estable
-    async function sha256(t){ const e=new TextEncoder().encode(t); const b=await crypto.subtle.digest("SHA-256",e); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
-    const uid = await sha256((email || login).toLowerCase());
-
-    // registrar en Apps Script
-    log("Registrando la solicitud de firma…");
-    const url = new URL(DESTINO);
-    url.searchParams.set("given",   given);
-    url.searchParams.set("surname", surname);
-    url.searchParams.set("email",   email);
-    url.searchParams.set("login",   login);
-    url.searchParams.set("uid",     uid);
-    url.searchParams.set("page",    document.referrer || location.href);
-    location.replace(url.toString());
-    return;
-  }
-
-  // Lanzar login (implicit grant)
-  log("Redirigiendo a Microsoft…","Si no ocurre nada, revisa que los 'implicit grants' estén activos en Azure.");
-  const state = rnd(), nonce = rnd();
-  sessionStorage.setItem("oauth_state", state);
-  sessionStorage.setItem("oauth_nonce", nonce);
-
-  const auth = new URL(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`);
-  auth.searchParams.set("client_id",     CLIENT_ID);
-  auth.searchParams.set("response_type", "token id_token");   // access_token + id_token
-  auth.searchParams.set("redirect_uri",  REDIRECT);
-  auth.searchParams.set("scope",         SCOPES);
-  auth.searchParams.set("response_mode", "fragment");
-  auth.searchParams.set("state",         state);
-  auth.searchParams.set("nonce",         nonce);
-  auth.searchParams.set("prompt",        "select_account");   // opcional
-
-  location.assign(auth.toString());
-})().catch(err => {
-  document.getElementById("log").innerHTML = "<b>Error:</b> " + (err?.message || String(err));
-});
-</script>
+  <section class="hero" role="img" aria-label="Edificio ZIENideas">
+    <div class="overlay"></div>
+    <div class="inner">
+      <div aria-hidden="true" style="font-size:46px;margin-bottom:8px">✅</div>
+      <h1>Generando tu solicitud de firma…</h1>
+      <p>Esto tarda solo unos segundos. <strong>Revisa tu correo electrónico para descargar tu firma.</strong></p>
+      <div class="btns">
+        <a class="btn" href="https://outlook.office.com/mail/" target="_blank" rel="noopener">Abrir Outlook</a>
+      </div>
+    </div>
+  </section>
 </body>
-</html>
-
+</html>`;
